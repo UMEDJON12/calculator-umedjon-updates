@@ -1,0 +1,57 @@
+name: Verify Android and publish calculator update
+on:
+  push:
+    branches: [main]
+    paths: ['release-input/**', 'scripts/**', '.github/workflows/publish.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: calculator-stable-release
+  cancel-in-progress: false
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Read the exact public repository commit
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+      - name: Verify APK signature and metadata
+        run: python3 scripts/publish.py --verify-only
+      - name: Prepare Android 15 emulator
+        run: |
+          sudo chmod 666 /dev/kvm
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
+          echo no | avdmanager create avd --force -n calculator-api35 -k 'system-images;android-35;google_apis;x86_64'
+      - name: Test preview and final announcements on Android
+        run: |
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          emulator -avd calculator-api35 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 > emulator.log 2>&1 &
+          for attempt in $(seq 1 150); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then break; fi
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+          adb shell input keyevent 82
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb install release-input/Calculator-UMEDJON-previous.apk
+          adb install -r release-input/Calculator-UMEDJON-current.apk
+          adb install release-input/device-test.apk
+          mkdir -p checks
+          for phase in native announcements swipe hover; do
+            adb shell am force-stop tj.umedjon.calculator
+            adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/$phase.txt"
+            grep -q 'PASS: ' "checks/$phase.txt"
+            if grep -q 'FAIL\|INSTRUMENTATION_FAILED\|Process crashed' "checks/$phase.txt"; then exit 1; fi
+          done
+      - name: Publish verified signed APK and stable channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/publish.py
