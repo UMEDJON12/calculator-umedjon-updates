@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      ANDROID_AVD_HOME: ${{ runner.temp }}/calculator-avd
+      ANDROID_AVD_HOME: /tmp/calculator-avd
     steps:
       - name: Read the exact public repository commit
         run: |
