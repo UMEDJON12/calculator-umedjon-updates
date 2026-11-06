@@ -58,7 +58,7 @@ jobs:
           adb install -r release-input/Calculator-UMEDJON-current.apk
           adb install release-input/device-test.apk
           mkdir -p checks
-          for phase in native announcements swipe hover; do
+          for phase in native announcements voice swipe hover; do
             adb shell am force-stop tj.umedjon.calculator
             timeout 120s adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/$phase.txt"
             grep -q 'PASS: ' "checks/$phase.txt"
