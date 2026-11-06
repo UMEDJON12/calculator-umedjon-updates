@@ -13,6 +13,8 @@ jobs:
   verify-and-publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      ANDROID_AVD_HOME: ${{ runner.temp }}/calculator-avd
     steps:
       - name: Read the exact public repository commit
         run: |
@@ -30,10 +32,13 @@ jobs:
           sudo apt-get install -y -qq libpulse0
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
-          echo no | avdmanager create avd --force -n calculator-api35 -k 'system-images;android-35;google_apis;x86_64'
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd --force -n calculator-api35 -p "$ANDROID_AVD_HOME/calculator-api35.avd" -k 'system-images;android-35;google_apis;x86_64'
+          printf 'avd.ini.encoding=UTF-8\npath=%s\ntarget=android-35\n' "$ANDROID_AVD_HOME/calculator-api35.avd" > "$ANDROID_AVD_HOME/calculator-api35.ini"
       - name: Test preview and final announcements on Android
         run: |
           export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          emulator -list-avds
           emulator -version
           emulator -accel-check
           emulator -avd calculator-api35 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -feature -Vulkan -memory 2048 > emulator.log 2>&1 &
