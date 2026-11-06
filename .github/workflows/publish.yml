@@ -32,9 +32,14 @@ jobs:
       - name: Test preview and final announcements on Android
         run: |
           export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
-          emulator -avd calculator-api35 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 > emulator.log 2>&1 &
+          emulator -version
+          emulator -accel-check
+          emulator -avd calculator-api35 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -feature -Vulkan -memory 2048 > emulator.log 2>&1 &
+          emulator_pid=$!
+          trap 'cat emulator.log; adb logcat -d -t 100 || true' ERR
           for attempt in $(seq 1 150); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then break; fi
+            kill -0 "$emulator_pid" || { cat emulator.log; exit 1; }
+            if [ "$(timeout 10s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then break; fi
             sleep 2
           done
           test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
@@ -48,7 +53,7 @@ jobs:
           mkdir -p checks
           for phase in native announcements swipe hover; do
             adb shell am force-stop tj.umedjon.calculator
-            adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/$phase.txt"
+            timeout 120s adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/$phase.txt"
             grep -q 'PASS: ' "checks/$phase.txt"
             if grep -q 'FAIL\|INSTRUMENTATION_FAILED\|Process crashed' "checks/$phase.txt"; then exit 1; fi
           done
