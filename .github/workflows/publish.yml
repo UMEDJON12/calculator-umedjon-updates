@@ -26,6 +26,8 @@ jobs:
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           sudo chmod 666 /dev/kvm
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpulse0
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
           echo no | avdmanager create avd --force -n calculator-api35 -k 'system-images;android-35;google_apis;x86_64'
