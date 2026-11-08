@@ -25,6 +25,33 @@ jobs:
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
+      - name: Stage exact APK and metadata from the published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            tag="$(jq -r '.release.tag_name' "$GITHUB_EVENT_PATH")"
+          else
+            tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || { echo "Invalid stable release tag: $tag"; exit 1; }
+          version="${tag#v}"
+          staging="$RUNNER_TEMP/calculator-published-release"
+          mkdir -p "$staging"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" --pattern "Calculator-UMEDJON-${version}.apk" --pattern "update.json"
+          test -s "$staging/Calculator-UMEDJON-${version}.apk"
+          test -s "$staging/update.json"
+          cp "$staging/Calculator-UMEDJON-${version}.apk" release-input/Calculator-UMEDJON-current.apk
+          cp "$staging/update.json" release-input/update.json
+          python3 - "$tag" <<'PY'
+          import json, sys
+          from pathlib import Path
+          data=json.loads(Path('release-input/update.json').read_text())
+          assert 'v'+data['versionName']==sys.argv[1], 'Release tag does not match update metadata'
+          assert data['apkFileName']=='Calculator-UMEDJON-'+data['versionName']+'.apk'
+          print('Staged published release:', sys.argv[1], 'versionCode:', data['versionCode'])
+          PY
       - name: Verify APK signature and metadata
         run: python3 scripts/publish.py --verify-only
       - name: Prepare Android 15 emulator

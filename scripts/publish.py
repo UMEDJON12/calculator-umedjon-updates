@@ -47,7 +47,7 @@ def publish():
         if e.code!=404:raise
         release=api('/releases','POST',{'tag_name':tag,'target_commitish':os.environ['GITHUB_SHA'],'name':'Калькулятор UMEDJON '+data['versionName'],'body':data['releaseNotes'],'draft':True,'prerelease':False})
     assert not release['prerelease']
-    expected={data['apkFileName']:apk.read_bytes(),'update.json':(json.dumps(data,ensure_ascii=False,indent=2)+'\n').encode()}
+    expected={data['apkFileName']:apk.read_bytes(),'update.json':(ROOT/'release-input/update.json').read_bytes()}
     assets={a['name']:a for a in release['assets']}
     for name,body in expected.items():
         if name in assets:
