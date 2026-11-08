@@ -1,8 +1,7 @@
 name: Verify Android and publish calculator update
 on:
-  push:
-    branches: [main]
-    paths: ['release-input/**', 'scripts/**', '.github/workflows/publish.yml']
+  release:
+    types: [published]
   workflow_dispatch:
 permissions:
   contents: write
