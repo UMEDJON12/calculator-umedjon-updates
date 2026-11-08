@@ -39,8 +39,9 @@ def api(path,method='GET',data=None,raw=None,content_type='application/json'):
         body=response.read();return json.loads(body) if body else None
 
 def publish():
-    assert os.environ['GITHUB_REPOSITORY']==REPO and os.environ['GITHUB_REF']=='refs/heads/main'
     data,apk=validate();tag='v'+data['versionName']
+    assert os.environ['GITHUB_REPOSITORY']==REPO
+    assert os.environ['GITHUB_REF'] in ('refs/heads/main','refs/tags/'+tag),'Run from main or from the release tag being published'
     try:release=api('/releases/tags/'+tag)
     except urllib.error.HTTPError as e:
         if e.code!=404:raise
@@ -55,8 +56,12 @@ def publish():
         assert release['draft'],'Never alter an already published release'
         uploaded=api(release['upload_url'].split('{')[0]+'?name='+name,'POST',raw=body,content_type='application/vnd.android.package-archive' if name.endswith('.apk') else 'application/json')
         assert uploaded['size']==len(body) and uploaded.get('digest')=='sha256:'+hashlib.sha256(body).hexdigest()
-    if release['draft']:release=api('/releases/'+str(release['id']),'PATCH',{'draft':False,'make_latest':'true'})
-    latest=api('/releases/latest');assert latest['id']==release['id'] and not latest['draft']
+    if release['draft']:
+        release=api('/releases/'+str(release['id']),'PATCH',{'draft':False,'make_latest':'true'})
+    elif api('/releases/latest')['id']!=release['id']:
+        # The release was published by hand; make sure the app channel points at it.
+        release=api('/releases/'+str(release['id']),'PATCH',{'make_latest':'true'})
+    latest=api('/releases/latest');assert latest['id']==release['id'] and not release['draft']
     # Verify that anonymous users can fetch both public files before advertising them.
     for name,body in expected.items():
         with urllib.request.urlopen('https://github.com/'+REPO+'/releases/download/'+tag+'/'+name,timeout=90) as response:
