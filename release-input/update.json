@@ -3,13 +3,13 @@
   "packageName": "tj.umedjon.calculator",
   "variant": "standard",
   "testOnly": false,
-  "versionCode": 8,
-  "versionName": "1.0.7",
+  "versionCode": 10,
+  "versionName": "1.0.9",
   "minSdk": 24,
   "signingCertificateSha256": "53eab873fe40528cef6b084d644451057dd56d9d5bd0338d258c2c850743f0c7",
-  "sizeBytes": 406126,
-  "sha256": "251ab5049e2783782d36afc459071f9915a6bc26070878b2ff77296cc19e7fbc",
-  "apkFileName": "Calculator-UMEDJON-1.0.7.apk",
-  "apkUrl": "https://github.com/UMEDJON12/calculator-umedjon-updates/releases/download/v1.0.7/Calculator-UMEDJON-1.0.7.apk",
-  "releaseNotes": "Предварительный результат озвучивается до «Равно», итог — после нажатия. Добавлены голосовой ввод выражений и проверка обновлений из приложения. В настройках можно отключить предварительное озвучивание и автоматическую проверку обновлений."
+  "sizeBytes": 500891,
+  "sha256": "4a632ef0d9d0f16a193cc4f738dc93415b188fe5ce01be815a53dd0f1b719c46",
+  "apkFileName": "Calculator-UMEDJON-1.0.9.apk",
+  "apkUrl": "https://github.com/UMEDJON12/calculator-umedjon-updates/releases/download/v1.0.9/Calculator-UMEDJON-1.0.9.apk",
+  "releaseNotes": "Две новинки. Четвёртая тема «Тёмная с оранжевым»: чёрный фон, светлые цифры, оранжевые знаки действий и оранжевая кнопка «Равно». Отдельные звуки для действий: плюс — восходящий тон, минус — нисходящий, умножить и разделить — по два сигнала разной высоты, «Равно» — длинный тон, проценты и смена знака — тихий, удаление — низкий тон, запятая — мягкий. В настройках есть флажок «Разные звуки для действий»; при выключении возвращается прежний щелчок. Подписи, порядок и озвучивание клавиш не изменились, настройки и история сохраняются."
 }
