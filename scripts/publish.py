@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Publish only an already signed APK after native Android checks have passed."""
-import base64,glob,hashlib,json,os,re,subprocess,urllib.error,urllib.request
+import base64,glob,hashlib,json,os,re,subprocess,time,urllib.error,urllib.request
 from pathlib import Path
 
 REPO='UMEDJON12/calculator-umedjon-updates'
@@ -38,15 +38,34 @@ def api(path,method='GET',data=None,raw=None,content_type='application/json'):
     with urllib.request.urlopen(request,timeout=90) as response:
         body=response.read();return json.loads(body) if body else None
 
+def attempt(fn,tries=6,delay=5):
+    """GitHub needs a moment to expose a just-published release and its assets."""
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception:
+            if i==tries-1:raise
+            time.sleep(delay)
+
 def publish():
     data,apk=validate();tag='v'+data['versionName']
     assert os.environ['GITHUB_REPOSITORY']==REPO
-    assert os.environ['GITHUB_REF'] in ('refs/heads/main','refs/tags/'+tag),'Run from main or from the release tag being published'
+    event=os.environ.get('GITHUB_EVENT_NAME','')
+    if event=='release':
+        # For a release event the tag comes from the payload (already checked while
+        # staging); GITHUB_REF of release events is not the tag ref and must not be used.
+        payload=json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()).get('release',{})
+        assert payload.get('tag_name')==tag,'Release event tag does not match the update metadata'
+        assert not payload.get('draft',False),'A draft release must never be handled as published'
+    else:
+        assert os.environ['GITHUB_REF'] in ('refs/heads/main','refs/tags/'+tag),'Run from main or from the release tag being published'
     try:release=api('/releases/tags/'+tag)
     except urllib.error.HTTPError as e:
         if e.code!=404:raise
-        release=api('/releases','POST',{'tag_name':tag,'target_commitish':os.environ['GITHUB_SHA'],'name':'Калькулятор UMEDJON '+data['versionName'],'body':data['releaseNotes'],'draft':True,'prerelease':False})
+        # Creating and publishing a release is the maintainer's decision («Publish release»).
+        raise AssertionError('No published release for '+tag+'; automation never creates or publishes releases')
     assert not release['prerelease']
+    assert not release['draft'],'A draft release must be published by the maintainer, never by automation'
     expected={data['apkFileName']:apk.read_bytes(),'update.json':(ROOT/'release-input/update.json').read_bytes()}
     assets={a['name']:a for a in release['assets']}
     for name,body in expected.items():
@@ -56,26 +75,41 @@ def publish():
         assert release['draft'],'Never alter an already published release'
         uploaded=api(release['upload_url'].split('{')[0]+'?name='+name,'POST',raw=body,content_type='application/vnd.android.package-archive' if name.endswith('.apk') else 'application/json')
         assert uploaded['size']==len(body) and uploaded.get('digest')=='sha256:'+hashlib.sha256(body).hexdigest()
-    if release['draft']:
-        release=api('/releases/'+str(release['id']),'PATCH',{'draft':False,'make_latest':'true'})
-    elif api('/releases/latest')['id']!=release['id']:
+    if attempt(lambda: api('/releases/latest'))['id']!=release['id']:
         # The release was published by hand; make sure the app channel points at it.
         release=api('/releases/'+str(release['id']),'PATCH',{'make_latest':'true'})
-    latest=api('/releases/latest');assert latest['id']==release['id'] and not release['draft']
+    latest=attempt(lambda: api('/releases/latest'));assert latest['id']==release['id'] and not release['draft']
     # Verify that anonymous users can fetch both public files before advertising them.
     for name,body in expected.items():
-        with urllib.request.urlopen('https://github.com/'+REPO+'/releases/download/'+tag+'/'+name,timeout=90) as response:
-            public=response.read(len(body)+1)
-        assert public==body,'Public download differs from verified input'
+        def fetch():
+            with urllib.request.urlopen('https://github.com/'+REPO+'/releases/download/'+tag+'/'+name,timeout=90) as response:
+                return response.read(len(body)+1)
+        assert attempt(fetch)==body,'Public download differs from verified input'
     channel=dict(data,ready=True,tagName=tag,publishedAt=release['published_at'])
     path='/contents/updates/stable.json';request={'message':'Publish verified calculator '+data['versionName']+' channel','branch':'main','content':base64.b64encode((json.dumps(channel,ensure_ascii=False,indent=2)+'\n').encode()).decode()}
-    try:
-        old=api(path+'?ref=main');previous=json.loads(base64.b64decode(old['content']))
-        assert previous['versionCode']<=data['versionCode'],'Never downgrade the stable channel'
-        request['sha']=old['sha']
-    except urllib.error.HTTPError as e:
-        if e.code!=404:raise
-    api(path,'PUT',request)
+    body=json.dumps(channel,ensure_ascii=False,indent=2)+'\n'
+    for i in range(5):
+        try:
+            old=api(path+'?ref=main')
+            previous_text=base64.b64decode(old['content']).decode()
+            if previous_text==body:
+                print(json.dumps({'published':True,'version':data['versionName'],'publicApkVerified':True,'stableChannel':'already current'}))
+                return
+            previous=json.loads(previous_text)
+            assert previous['versionCode']<=data['versionCode'],'Never downgrade the stable channel'
+            request['sha']=old['sha']
+        except urllib.error.HTTPError as e:
+            if e.code!=404:raise
+            request.pop('sha',None)
+        try:
+            api(path,'PUT',request)
+            break
+        except urllib.error.HTTPError as e:
+            # 409/422: somebody moved main between read and write (e.g. the workflow commit).
+            if i==4 or e.code not in (409,422):raise
+            time.sleep(3)
+    else:
+        raise AssertionError('stable.json was not updated')
     print(json.dumps({'published':True,'version':data['versionName'],'publicApkVerified':True,'release':release['html_url']}))
 
 if __name__=='__main__':

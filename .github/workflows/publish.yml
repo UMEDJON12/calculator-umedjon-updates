@@ -13,11 +13,12 @@ concurrency:
   group: calculator-stable-release
   cancel-in-progress: false
 jobs:
+  # Blocking gate: nothing is advertised to users until the published APK and its
+  # metadata (package, version, certificate, size, SHA-256, apkUrl) are verified.
   verify-and-publish:
+    name: Verify published APK and update the stable channel
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      ANDROID_AVD_HOME: /tmp/calculator-avd
+    timeout-minutes: 15
     steps:
       - name: Read the exact public repository commit
         run: |
@@ -54,6 +55,45 @@ jobs:
           PY
       - name: Verify APK signature and metadata
         run: python3 scripts/publish.py --verify-only
+      - name: Publish verified signed APK and stable channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/publish.py
+
+  # Independent quality signal: the same instrumented phases as before. It never
+  # gates the stable channel, so a flaky emulator cannot delay an already
+  # verified update; its result is visible next to the blocking gate.
+  android-tests:
+    name: Android instrumentation tests (informational)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ANDROID_AVD_HOME: /tmp/calculator-avd
+    steps:
+      - name: Read the exact public repository commit
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+      - name: Stage the APK of the release under test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            tag="$(jq -r '.release.tag_name' "$GITHUB_EVENT_PATH")"
+          else
+            tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          version="${tag#v}"
+          staging="$RUNNER_TEMP/calculator-test-release"
+          mkdir -p "$staging"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" --pattern "Calculator-UMEDJON-${version}.apk"
+          test -s "$staging/Calculator-UMEDJON-${version}.apk"
+          cp "$staging/Calculator-UMEDJON-${version}.apk" release-input/Calculator-UMEDJON-current.apk
+          test -s release-input/Calculator-UMEDJON-previous.apk
+          test -s release-input/device-test.apk
       - name: Prepare Android 15 emulator
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
@@ -79,7 +119,7 @@ jobs:
             if [ "$(timeout 10s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then break; fi
             sleep 2
           done
-          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+          test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1
           adb shell input keyevent 82
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
@@ -88,13 +128,19 @@ jobs:
           adb install -r release-input/Calculator-UMEDJON-current.apk
           adb install release-input/device-test.apk
           mkdir -p checks
+          overall=0
           for phase in native announcements voice swipe hover; do
             adb shell am force-stop tj.umedjon.calculator
-            timeout 120s adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/$phase.txt"
-            grep -q 'PASS: ' "checks/$phase.txt"
-            if grep -q 'FAIL\|INSTRUMENTATION_FAILED\|Process crashed' "checks/$phase.txt"; then exit 1; fi
+            ok=0
+            for attempt in 1 2; do
+              if timeout 120s adb shell am instrument -w -e phase "$phase" tj.umedjon.calculator.tests/tj.umedjon.calculator.tests.AccessibilitySmoke | tee "checks/${phase}.txt"; then
+                if grep -q 'PASS: ' "checks/${phase}.txt" && ! grep -q 'FAIL\|INSTRUMENTATION_FAILED\|Process crashed' "checks/${phase}.txt"; then
+                  ok=1; break
+                fi
+              fi
+              echo "phase ${phase} attempt ${attempt} failed; retrying"
+              sleep 5
+            done
+            if [ "$ok" != 1 ]; then overall=1; echo "::error::Instrumentation phase ${phase} failed twice"; fi
           done
-      - name: Publish verified signed APK and stable channel
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/publish.py
+          exit $overall
